@@ -1,0 +1,19 @@
+{
+  "name": "buntingp-claude-warden",
+  "owner": {
+    "name": "Paul Bunting",
+    "url": "https://github.com/pbunting/claude-warden"
+  },
+  "plugins": [
+    {
+      "name": "observer",
+      "source": "./plugins/observer",
+      "description": "Observability for Claude sessions",
+      "displayName": "Claude Warden Observer"
+    }
+  ],
+  "description": "AI Observability & Governance helper",
+  "version": "0.0.0",
+  "forceRemoveDeletedPlugins": true
+}
+
