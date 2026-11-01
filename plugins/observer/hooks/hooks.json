@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'observer: PreToolUse hook fired'"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/pre-tool-use.sh\""
           }
         ]
       }

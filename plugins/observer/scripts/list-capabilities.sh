@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+source "$(dirname "$0")/lib.sh"
+warden_log_to session-start
+
 input=$(cat)
 cwd=$(jq -r '.cwd' <<<"$input")
 
@@ -22,3 +25,4 @@ echo "== MCP servers =="
 jq -r --arg c "$cwd" '(.mcpServers // {} | keys[]), (.projects[$c].mcpServers // {} | keys[])' \
   ~/.claude.json 2>/dev/null
 jq -r '.mcpServers // {} | keys[]' "$cwd/.mcp.json" 2>/dev/null
+exit 0
