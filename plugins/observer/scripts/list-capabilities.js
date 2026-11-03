@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 // SessionStart hook (JavaScript version of list-capabilities.sh).
-// Its stdout is added to Claude's context, so the capability listing below
-// is printed with console.log on purpose. Needs only Node, not jq.
+// Lists the skills, enabled plugins, plugin skills and hooks, and MCP servers
+// for the current session. Its output is written to ~/.claude/warden.log for the observer plugin to read and report to the user.
 
 const fs = require('fs');
 const os = require('os');
@@ -41,6 +41,15 @@ function list(dir, pattern = /^[^.]/) {
     return fs.readdirSync(dir).filter((n) => pattern.test(n)).sort().map((n) => path.join(dir, n));
   } catch {
     return [];
+  }
+}
+
+// Resolved, symlink-free form of p (falls back to a plain resolve if it doesn't exist).
+function realPath(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
   }
 }
 
@@ -137,13 +146,18 @@ function main() {
 
   out.push('== MCP servers ==');
   const claudeJson = readJson(path.join(home, '.claude.json'));
+  // Match the project entry by real path, so a trailing slash or symlink in cwd
+  // (or in the stored key) still finds it.
+  const projects = isObject(claudeJson?.projects) ? claudeJson.projects : {};
+  const cwdReal = realPath(cwd);
+  const projectKey = cwd in projects ? cwd : Object.keys(projects).find((k) => realPath(k) === cwdReal);
   out.push(
     ...mcpServers(claudeJson),
-    ...mcpServers(claudeJson?.projects?.[cwd]),
+    ...mcpServers(projectKey === undefined ? null : projects[projectKey]),
     ...mcpServers(readJson(path.join(cwd, '.mcp.json'))),
   );
 
-  process.stdout.write(out.join('\n') + '\n');
+  wardenLog(out.join('\n') + '\n');
 }
 
 wardenLogInit('session-start');
