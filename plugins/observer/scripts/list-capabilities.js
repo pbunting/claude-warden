@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 // SessionStart hook (JavaScript version of list-capabilities.sh).
-// Its stdout is added to Claude's context, so the capability listing below
-// is printed with console.log on purpose. Needs only Node, not jq.
+// Lists the skills, enabled plugins, plugin skills and hooks, and MCP servers
+// for the current session. Its output is written to ~/.claude/warden.log for the observer plugin to read and report to the user.
 
 const fs = require('fs');
 const os = require('os');
