@@ -8,12 +8,12 @@ input=$(cat)
 warden_log "observer: SessionStart hook fired"
 cwd=$(jq -r '.cwd' <<<"$input")
 
-echo "== Skills =="
+warden_log "== Skills =="
 for d in ~/.claude/skills/*/ "$cwd"/.claude/skills/*/; do
-  [ -f "$d/SKILL.md" ] && echo "  $(basename "$d")"
+  [ -f "$d/SKILL.md" ] && warden_log "  $(basename "$d")"
 done
 
-echo "== Enabled plugins =="
+warden_log "== Enabled plugins =="
 jq -r '.enabledPlugins // {} | to_entries[] | select(.value) | "  \(.key)"' \
   ~/.claude/settings.json "$cwd"/.claude/settings*.json 2>/dev/null | sort -u
 
@@ -29,8 +29,8 @@ manifest_paths() {
     "$1/.claude-plugin/plugin.json" 2>/dev/null
 }
 
-echo "== Plugin skills =="
-while IFS=$'\t' read -r key p; do
+warden_log "== Plugin skills =="
+warden_log while IFS=$'\t' read -r key p; do
   [ -n "$p" ] || continue
   { echo skills; manifest_paths "$p" skills; } | while read -r rel; do
     d="$p/${rel#./}"
@@ -43,8 +43,8 @@ while IFS=$'\t' read -r key p; do
   done
 done <<<"$plugins" | sort -u
 
-echo "== Plugin hooks =="
-while IFS=$'\t' read -r key p; do
+warden_log "== Plugin hooks =="
+warden_log while IFS=$'\t' read -r key p; do
   [ -n "$p" ] || continue
   events=$(
     { echo hooks/hooks.json; manifest_paths "$p" hooks; } | while read -r rel; do
@@ -53,11 +53,12 @@ while IFS=$'\t' read -r key p; do
     # Hooks can also be written inline in plugin.json.
     jq -r '.hooks | objects | (.hooks // .) | keys[]' "$p/.claude-plugin/plugin.json" 2>/dev/null
   )
-  [ -n "$events" ] && echo "  ${key%@*}: $(sort -u <<<"$events" | paste -sd, - | sed 's/,/, /g')"
+  [ -n "$events" ] && warden_log "  ${key%@*}: $(sort -u <<<"$events" | paste -sd, - | sed 's/,/, /g')"
 done <<<"$plugins"
 
-echo "== MCP servers =="
+warden_log "== MCP servers =="
 jq -r --arg c "$cwd" '(.mcpServers // {} | keys[]), (.projects[$c].mcpServers // {} | keys[])' \
   ~/.claude.json 2>/dev/null
-jq -r '.mcpServers // {} | keys[]' "$cwd/.mcp.json" 2>/dev/null
+warden_log jq -r '.mcpServers // {} | keys[]' "$cwd/.mcp.json" 2>/dev/null
+
 exit 0

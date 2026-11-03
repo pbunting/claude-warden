@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/list-capabilities.sh\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/list-capabilities.js\""
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/pre-tool-use.sh\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/pre-tool-use.js\""
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/post-tool-use.sh\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/post-tool-use.js\""
           }
         ]
       }
