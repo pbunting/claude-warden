@@ -44,6 +44,15 @@ function list(dir, pattern = /^[^.]/) {
   }
 }
 
+// Resolved, symlink-free form of p (falls back to a plain resolve if it doesn't exist).
+function realPath(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
 const subdirs = (dir) => list(dir).filter(isDir);
 const hasSkill = (dir) => isFile(path.join(dir, 'SKILL.md'));
 const sorted = (set) => [...set].sort();
@@ -137,13 +146,18 @@ function main() {
 
   out.push('== MCP servers ==');
   const claudeJson = readJson(path.join(home, '.claude.json'));
+  // Match the project entry by real path, so a trailing slash or symlink in cwd
+  // (or in the stored key) still finds it.
+  const projects = isObject(claudeJson?.projects) ? claudeJson.projects : {};
+  const cwdReal = realPath(cwd);
+  const projectKey = cwd in projects ? cwd : Object.keys(projects).find((k) => realPath(k) === cwdReal);
   out.push(
     ...mcpServers(claudeJson),
-    ...mcpServers(claudeJson?.projects?.[cwd]),
+    ...mcpServers(projectKey === undefined ? null : projects[projectKey]),
     ...mcpServers(readJson(path.join(cwd, '.mcp.json'))),
   );
 
-  process.stdout.write(out.join('\n') + '\n');
+  wardenLog(out.join('\n') + '\n');
 }
 
 wardenLogInit('session-start');
