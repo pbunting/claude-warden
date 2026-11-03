@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 'use strict';
-// SessionStart hook (JavaScript version of list-capabilities.sh).
-// Lists the skills, enabled plugins, plugin skills and hooks, and MCP servers
-// for the current session. Its output is written to ~/.claude/warden.log for the observer plugin to read and report to the user.
+// SessionStart hook. Lists the skills, installed plugins (with enabled state and
+// hook events) and MCP servers for the current session, and writes them as one
+// JSON line to ~/.claude-warden/session-start.log for the observer plugin to read:
+//   {"skills":[{name,source,version?}], "plugins":[{name,version,enabled,events}], "mcpServers":[{name,source}]}
+// Plugins are identified by "name@marketplace" plus version; plugin skills carry
+// their plugin's version.
 
 const fs = require('fs');
 const os = require('os');
@@ -56,7 +59,20 @@ function realPath(p) {
 const subdirs = (dir) => list(dir).filter(isDir);
 const hasSkill = (dir) => isFile(path.join(dir, 'SKILL.md'));
 const sorted = (set) => [...set].sort();
-const mcpServers = (o) => (isObject(o) && isObject(o.mcpServers) ? Object.keys(o.mcpServers).sort() : []);
+const byName = (a, b) =>
+  a.name.localeCompare(b.name) ||
+  (a.source ?? '').localeCompare(b.source ?? '') ||
+  String(a.version ?? '').localeCompare(String(b.version ?? ''), undefined, { numeric: true });
+const mcpServers = (o) => (isObject(o) && isObject(o.mcpServers) ? Object.keys(o.mcpServers) : []);
+
+// Paths a plugin.json field lists (a string or an array of strings).
+function manifestPaths(manifest, field) {
+  const value = manifest?.[field];
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.filter((v) => typeof v === 'string');
+  return [];
+}
+const resolveIn = (dir, rel) => path.join(dir, rel.replace(/^\.\//, ''));
 
 function main() {
   let input = {};
@@ -69,95 +85,106 @@ function main() {
 
   const cwd = (isObject(input) && input.cwd) || process.cwd();
   const home = os.homedir();
-  const out = [];
+  const out = { skills: [], plugins: [], mcpServers: [] };
+  // Skills keyed by source, name and (for plugin skills) version, so a repeat is
+  // listed once but a user and a project skill with the same name both appear.
+  const skills = new Map();
+  const addSkill = (name, source, version) =>
+    skills.set(`${source}\0${name}\0${version}`, version === undefined ? { name, source } : { name, source, version });
 
-  out.push('== Skills ==');
-  for (const d of [...subdirs(path.join(home, '.claude/skills')), ...subdirs(path.join(cwd, '.claude/skills'))]) {
-    if (hasSkill(d)) out.push(`  ${path.basename(d)}`);
-  }
-
-  out.push('== Enabled plugins ==');
-  const enabled = new Set();
-  const settingsFiles = [
-    path.join(home, '.claude/settings.json'),
-    ...list(path.join(cwd, '.claude'), /^settings.*\.json$/),
-  ];
-  for (const file of settingsFiles) {
-    const plugins = readJson(file)?.enabledPlugins;
-    if (!isObject(plugins)) continue;
-    for (const [key, on] of Object.entries(plugins)) {
-      if (on !== false && on != null) enabled.add(`  ${key}`);
+  for (const [source, base] of [['user', home], ['project', cwd]]) {
+    for (const d of subdirs(path.join(base, '.claude/skills'))) {
+      if (hasSkill(d)) addSkill(path.basename(d), source);
     }
   }
-  out.push(...sorted(enabled));
 
-  // Installed plugins: name (without "@marketplace") and install folder.
-  const plugins = [];
+  // Enabled state: settings files in precedence order (user, project, local);
+  // a later file's value for a plugin overrides an earlier one.
+  const enabled = new Map();
+  const settingsFiles = [
+    path.join(home, '.claude/settings.json'),
+    path.join(cwd, '.claude/settings.json'),
+    path.join(cwd, '.claude/settings.local.json'),
+  ];
+  for (const file of settingsFiles) {
+    const entries = readJson(file)?.enabledPlugins;
+    if (!isObject(entries)) continue;
+    for (const [key, on] of Object.entries(entries)) enabled.set(key, on !== false && on != null);
+  }
+
+  // Installed plugins keyed by "name@marketplace" and version. The same version
+  // installed at several scopes is one entry with several install folders.
+  // The version comes from installed_plugins.json, else from plugin.json.
+  const plugins = new Map();
   const installed = readJson(path.join(home, '.claude/plugins/installed_plugins.json'))?.plugins;
   if (isObject(installed)) {
     for (const [key, entries] of Object.entries(installed)) {
       if (!Array.isArray(entries)) continue;
       for (const entry of entries) {
-        if (entry && typeof entry.installPath === 'string' && entry.installPath) {
-          plugins.push({ name: key.replace(/@[^@]*$/, ''), dir: entry.installPath });
+        if (!(entry && typeof entry.installPath === 'string' && entry.installPath)) continue;
+        const dir = entry.installPath;
+        const manifest = readJson(path.join(dir, '.claude-plugin/plugin.json'));
+        const v = typeof entry.version === 'string' ? entry.version : manifest?.version;
+        const version = typeof v === 'string' && v ? v : null;
+        const id = `${key}\0${version}`;
+        if (!plugins.has(id)) {
+          plugins.set(id, { name: key, version, enabled: enabled.get(key) === true, dirs: new Map() });
         }
+        plugins.get(id).dirs.set(dir, manifest);
       }
     }
   }
 
-  // A plugin's skills and hooks are in its default folders (skills/, hooks/hooks.json)
-  // plus any paths its plugin.json lists under "skills" or "hooks".
-  const manifest = (dir) => readJson(path.join(dir, '.claude-plugin/plugin.json'));
-  const manifestPaths = (dir, field) => {
-    const value = manifest(dir)?.[field];
-    if (typeof value === 'string') return [value];
-    if (Array.isArray(value)) return value.filter((v) => typeof v === 'string');
-    return [];
-  };
-  const resolveIn = (dir, rel) => path.join(dir, rel.replace(/^\.\//, ''));
-
-  out.push('== Plugin skills ==');
-  const pluginSkills = new Set();
-  for (const { name, dir } of plugins) {
-    for (const rel of ['skills', ...manifestPaths(dir, 'skills')]) {
-      const d = resolveIn(dir, rel);
-      // A path can be one skill folder or a folder of skill folders.
-      const skills = hasSkill(d) ? [d] : subdirs(d).filter(hasSkill);
-      for (const s of skills) pluginSkills.add(`  ${name}:${path.basename(s)}`);
-    }
-  }
-  out.push(...sorted(pluginSkills));
-
-  out.push('== Plugin hooks ==');
-  for (const { name, dir } of plugins) {
+  // A plugin's skills and hooks are in its default folders (skills/, hooks/hooks.json),
+  // any paths its plugin.json lists under "skills" or "hooks", and inline hooks
+  // in plugin.json. Only enabled plugins contribute skills and hook events.
+  for (const { name: key, version, enabled: on, dirs } of plugins.values()) {
+    const pluginName = key.replace(/@[^@]*$/, '');
     const events = new Set();
-    for (const rel of ['hooks/hooks.json', ...manifestPaths(dir, 'hooks')]) {
-      const hooks = readJson(resolveIn(dir, rel))?.hooks;
-      if (isObject(hooks)) Object.keys(hooks).forEach((e) => events.add(e));
-    }
-    // Hooks can also be written inline in plugin.json.
-    const inline = manifest(dir)?.hooks;
-    if (isObject(inline)) {
-      const hooks = inline.hooks ?? inline;
-      if (isObject(hooks)) Object.keys(hooks).forEach((e) => events.add(e));
-    }
-    if (events.size) out.push(`  ${name}: ${sorted(events).join(', ')}`);
-  }
+    if (on) {
+      for (const [dir, manifest] of dirs) {
+        for (const rel of ['skills', ...manifestPaths(manifest, 'skills')]) {
+          const d = resolveIn(dir, rel);
+          // A path can be one skill folder or a folder of skill folders.
+          const found = hasSkill(d) ? [d] : subdirs(d).filter(hasSkill);
+          for (const s of found) addSkill(`${pluginName}:${path.basename(s)}`, `plugin:${key}`, version);
+        }
 
-  out.push('== MCP servers ==');
+        for (const rel of ['hooks/hooks.json', ...manifestPaths(manifest, 'hooks')]) {
+          const hooks = readJson(resolveIn(dir, rel))?.hooks;
+          if (isObject(hooks)) Object.keys(hooks).forEach((e) => events.add(e));
+        }
+        const inline = manifest?.hooks;
+        if (isObject(inline)) {
+          const hooks = inline.hooks ?? inline;
+          if (isObject(hooks)) Object.keys(hooks).forEach((e) => events.add(e));
+        }
+      }
+    }
+    out.plugins.push({ name: key, version, enabled: on, events: sorted(events) });
+  }
+  out.plugins.sort(byName);
+  out.skills = [...skills.values()].sort(byName);
+
+  // MCP servers keyed by name; a later scope (project .mcp.json, then local
+  // project entry in ~/.claude.json) overrides an earlier one, as in Claude Code.
   const claudeJson = readJson(path.join(home, '.claude.json'));
   // Match the project entry by real path, so a trailing slash or symlink in cwd
   // (or in the stored key) still finds it.
   const projects = isObject(claudeJson?.projects) ? claudeJson.projects : {};
   const cwdReal = realPath(cwd);
   const projectKey = cwd in projects ? cwd : Object.keys(projects).find((k) => realPath(k) === cwdReal);
-  out.push(
-    ...mcpServers(claudeJson),
-    ...mcpServers(projectKey === undefined ? null : projects[projectKey]),
-    ...mcpServers(readJson(path.join(cwd, '.mcp.json'))),
-  );
+  const servers = new Map();
+  for (const [source, config] of [
+    ['user', claudeJson],
+    ['project', readJson(path.join(cwd, '.mcp.json'))],
+    ['local', projectKey === undefined ? null : projects[projectKey]],
+  ]) {
+    for (const name of mcpServers(config)) servers.set(name, { name, source });
+  }
+  out.mcpServers = [...servers.values()].sort(byName);
 
-  wardenLog(out.join('\n') + '\n');
+  wardenLog(out);
 }
 
 wardenLogInit('session-start');
