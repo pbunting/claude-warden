@@ -8,7 +8,8 @@
 //   Sets the log file to ~/.claude-warden/<name>.log. All projects share it,
 //   so each line is tagged with the project folder's name.
 // wardenLog(...message)
-//   Appends one timestamped line to that log file.
+//   Appends one timestamped line to that log file. Non-string arguments are
+//   written as single-line JSON.
 
 const fs = require('fs');
 const os = require('os');
@@ -34,7 +35,8 @@ function wardenLog(...message) {
   if (!logFile) return;
   const time = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   try {
-    fs.appendFileSync(logFile, `${time} [${project}] [${logName}] ${message.join(' ')}\n`);
+    const text = message.map((m) => (typeof m === 'string' ? m : JSON.stringify(m))).join(' ');
+    fs.appendFileSync(logFile, `${time} [${project}] [${logName}] ${text}\n`);
   } catch {
     // Ignore: logging must never break a hook.
   }
